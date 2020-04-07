@@ -28,6 +28,7 @@ type Cron struct {
 
 // Job is an interface for submitted cron jobs.
 type Job interface {
+	GetID() EntryID
 	Run()
 }
 
@@ -39,7 +40,10 @@ type Schedule interface {
 }
 
 // EntryID identifies an entry within a Cron instance
-type EntryID int
+type EntryID string
+
+// ZeroEntryID ZeroEntryID
+var ZeroEntryID = EntryID("")
 
 // Entry consists of a schedule and the func to execute on that schedule.
 type Entry struct {
@@ -67,7 +71,7 @@ type Entry struct {
 }
 
 // Valid returns true if this is not the zero entry.
-func (e Entry) Valid() bool { return e.ID != 0 }
+func (e Entry) Valid() bool { return e.ID != ZeroEntryID }
 
 // byTime is a wrapper for sorting the entry array by time
 // (with zero time at the end).
@@ -126,15 +130,30 @@ func New(opts ...Option) *Cron {
 }
 
 // FuncJob is a wrapper that turns a func() into a cron.Job
-type FuncJob func()
+type FuncJob struct {
+	id EntryID
+	f  func(EntryID)
+}
 
-func (f FuncJob) Run() { f() }
+// GetID GetID
+func (p FuncJob) GetID() EntryID { return p.id }
+
+// Run Run
+func (p FuncJob) Run() { p.f(p.GetID()) }
+
+// NewFuncJob NewFuncJob
+func NewFuncJob(id EntryID, cmd func(EntryID)) FuncJob {
+	return FuncJob{
+		id: id,
+		f:  cmd,
+	}
+}
 
 // AddFunc adds a func to the Cron to be run on the given schedule.
 // The spec is parsed using the time zone of this Cron instance as the default.
 // An opaque ID is returned that can be used to later remove it.
-func (c *Cron) AddFunc(spec string, cmd func()) (EntryID, error) {
-	return c.AddJob(spec, FuncJob(cmd))
+func (c *Cron) AddFunc(id EntryID, spec string, cmd func(EntryID)) (EntryID, error) {
+	return c.AddJob(spec, NewFuncJob(id, cmd))
 }
 
 // AddJob adds a Job to the Cron to be run on the given schedule.
@@ -143,7 +162,7 @@ func (c *Cron) AddFunc(spec string, cmd func()) (EntryID, error) {
 func (c *Cron) AddJob(spec string, cmd Job) (EntryID, error) {
 	schedule, err := c.parser.Parse(spec)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	return c.Schedule(schedule, cmd), nil
 }
@@ -153,9 +172,10 @@ func (c *Cron) AddJob(spec string, cmd Job) (EntryID, error) {
 func (c *Cron) Schedule(schedule Schedule, cmd Job) EntryID {
 	c.runningMu.Lock()
 	defer c.runningMu.Unlock()
-	c.nextID++
+	// c.nextID++
 	entry := &Entry{
-		ID:         c.nextID,
+		// ID:         c.nextID,
+		ID:         cmd.GetID(),
 		Schedule:   schedule,
 		WrappedJob: c.chain.Then(cmd),
 		Job:        cmd,
